@@ -1572,6 +1572,11 @@ export function createGatewayEventHandler(ctx: GatewayEventHandlerContext): (ev:
 
         setStatus('ready')
 
+        // The recorder is deliberately one-capture-at-a-time.  Re-arm only
+        // after the real agent turn completed; the gateway further waits for
+        // local TTS so speaker output is not captured as the next user turn.
+        void rpc('voice.record', { action: 'rearm', session_id: getUiState().sid }).catch(() => undefined)
+
         if (ev.payload?.warning) {
           turnController.pushActivity(ev.payload.warning, 'warn')
         }

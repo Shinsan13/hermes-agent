@@ -2657,7 +2657,7 @@ export interface VoiceRecordParams {
   session_id?: string | null
   profile?: string | null
 }
-export type VoiceRecordAction = 'start' | 'stop'
+export type VoiceRecordAction = 'start' | 'stop' | 'rearm'
 export interface VoiceRecordResult {
   status: VoiceRecordStatus
   reason?: string | null
@@ -5124,7 +5124,7 @@ export interface RpcMethods {
   'vault.unlock': { params: VaultUnlockParams; result: VaultUnlockResult }
   /** Best known verification evidence for a cwd/session; read-only, never runs checks. */
   'verification.status': { params: VerificationStatusParams; result: VerificationStatusResult }
-  /** VAD-bounded push-to-talk; the transcript arrives as a voice.transcript event. */
+  /** VAD-bounded capture; rearm waits for the preceding turn/TTS before opening the mic. */
   'voice.record': { params: VoiceRecordParams; result: VoiceRecordResult }
   /** /voice parity: report, flip voice mode on/off, or toggle speech output. */
   'voice.toggle': { params: VoiceToggleParams; result: VoiceToggleResult }

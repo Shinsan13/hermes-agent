@@ -366,6 +366,7 @@ method("voice.toggle", params=VoiceToggleParams, result=VoiceToggleResult,
 class VoiceRecordAction(WireEnum):
     start = "start"
     stop = "stop"
+    rearm = "rearm"
 
 
 class VoiceRecordParams(Params):
@@ -386,7 +387,7 @@ class VoiceRecordResult(Result):
 
 
 method("voice.record", params=VoiceRecordParams, result=VoiceRecordResult,
-       doc="VAD-bounded push-to-talk; the transcript arrives as a voice.transcript event.")
+       doc="VAD-bounded capture; rearm waits for the preceding turn/TTS before opening the mic.")
 
 
 class VoiceTtsParams(Params):

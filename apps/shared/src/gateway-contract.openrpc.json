@@ -4112,7 +4112,7 @@
     },
     {
       "name": "voice.record",
-      "summary": "VAD-bounded push-to-talk; the transcript arrives as a voice.transcript event.",
+      "summary": "VAD-bounded capture; rearm waits for the preceding turn/TTS before opening the mic.",
       "params": [
         {
           "name": "params",
@@ -36338,7 +36338,8 @@
       "VoiceRecordAction": {
         "enum": [
           "start",
-          "stop"
+          "stop",
+          "rearm"
         ],
         "title": "VoiceRecordAction",
         "type": "string"

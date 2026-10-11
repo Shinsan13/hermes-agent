@@ -2230,6 +2230,37 @@ def test_voice_record_stop_forces_transcription(monkeypatch):
     assert captured["force_transcribe"] is True
 
 
+def test_voice_rearm_waits_for_turn_boundary_and_supports_twenty_cycles(monkeypatch):
+    """The TUI must re-arm one capture only after its real turn completion.
+
+    This uses the registered gateway boundary and mocked audio provider, rather
+    than a CORBIN-owned state machine.  Repeating the boundary 20 times guards
+    against duplicate/reentrant starts in a long voice conversation.
+    """
+    calls = []
+
+    def start_continuous(**kwargs):
+        calls.append(kwargs)
+        return True
+
+    monkeypatch.setitem(sys.modules, "hermes_cli.voice", types.SimpleNamespace(
+        start_continuous=start_continuous,
+        set_voice_busy_probe=lambda _probe: None,
+    ))
+    monkeypatch.setenv("HERMES_VOICE", "1")
+    monkeypatch.setattr(server, "_fd_tts_pending", lambda: False)
+    monkeypatch.setattr(server, "_voice_emit", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(server, "_voice_rearm_generation", 0)
+
+    for generation in range(1, 21):
+        monkeypatch.setattr(server, "_voice_rearm_generation", generation)
+        server._rearm_after_turn(generation, {"silence_duration": 0.9}, 45.0)
+
+    assert len(calls) == 20
+    assert all(call["auto_restart"] is False for call in calls)
+    assert all(call["silence_duration"] == 0.9 for call in calls)
+
+
 def test_voice_record_stop_updates_event_session_id(monkeypatch):
     monkeypatch.setitem(
         sys.modules,

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import contextlib
 import threading
+import time
 
 from .method_ctx import HandlerRegistry, bind_module
 
@@ -19,6 +20,8 @@ method = _registry.method
 _voice_sid_lock = threading.Lock()
 _voice_event_sid: str = ""
 _voice_wake_owner: "Optional[Transport]" = None
+_voice_rearm_lock = threading.Lock()
+_voice_rearm_generation = 0
 
 
 def _caller_transport():
@@ -695,7 +698,40 @@ def _(rid, params: dict) -> dict:
 # and manual captures coexist.
 def _vr_transcript(payload: dict) -> None:
     _voice_emit("voice.transcript", payload)
+    if payload.get("text"):
+        _voice_emit("voice.status", {"state": "thinking"})
     _resume_voice_wake()
+
+
+def _rearm_after_turn(generation: int, voice_cfg: dict, max_rec: float) -> None:
+    """Wait for the real turn's TTS, then open exactly one next VAD capture.
+
+    The TUI owns prompt submission, so blindly using ``auto_restart=True`` in
+    the recorder races the model turn.  This bridge is deliberately driven by
+    the TUI's ``message.complete`` acknowledgement instead.
+    """
+    global _voice_rearm_generation
+    deadline = time.monotonic() + 60.0
+    while _fd_tts_pending() and time.monotonic() < deadline:
+        _voice_emit("voice.status", {"state": "speaking"})
+        time.sleep(0.05)
+    with _voice_rearm_lock:
+        if generation != _voice_rearm_generation or not _voice_mode_enabled():
+            return
+    try:
+        from hermes_cli.voice import start_continuous, set_voice_busy_probe
+        with contextlib.suppress(Exception):
+            set_voice_busy_probe(_any_session_running)
+        start_continuous(
+            on_transcript=lambda t: _vr_transcript({"text": t}), on_status=_vr_on_status,
+            on_silent_limit=lambda: _vr_transcript({"no_speech_limit": True}),
+            silence_threshold=_voice_cfg_number(voice_cfg.get("silence_threshold"), 200),
+            silence_duration=_voice_cfg_number(voice_cfg.get("silence_duration"), 3.0),
+            auto_restart=False, max_recording_seconds=max_rec if max_rec > 0 else 0.0,
+            on_stop_phrase=_vr_on_stop_phrase)
+    except Exception as exc:
+        logger.warning("voice: rearm failed: %s", exc)
+        _voice_emit("voice.status", {"state": "degraded"})
 
 
 def _vr_on_stop_phrase(t):
@@ -717,7 +753,7 @@ def _(rid, params: dict) -> dict:
     capture; ``stop`` forces transcription. Three silent captures emit ``no_speech_limit``."""
     action = params.get("action", "start")
     wake_paused = False
-    if action not in {"start", "stop"}:
+    if action not in {"start", "stop", "rearm"}:
         return _err(rid, 4019, f"unknown voice action: {action}")
     transport = _caller_transport()
     wake_owner, _surface = _wake_owner_snapshot()
@@ -729,6 +765,16 @@ def _(rid, params: dict) -> dict:
             return _err(rid, 4015, "voice mode is off — enable with /voice on")
         with _voice_sid_lock:
             _voice_event_sid = params.get("session_id") or _voice_event_sid
+        voice_cfg = _voice_cfg_dict()
+        max_rec = _voice_cfg_number(voice_cfg.get("max_recording_seconds"), 120.0)
+        if action == "rearm":
+            global _voice_rearm_generation
+            with _voice_rearm_lock:
+                _voice_rearm_generation += 1
+                generation = _voice_rearm_generation
+            threading.Thread(target=_rearm_after_turn, args=(generation, voice_cfg, max_rec),
+                             name="voice-turn-rearm", daemon=True).start()
+            return _ok(rid, {"status": "recording"})
         if action == "stop":
             from hermes_cli.voice import stop_continuous
             stop_continuous(force_transcribe=True)
@@ -746,8 +792,6 @@ def _(rid, params: dict) -> dict:
         # — fall back to VAD defaults. Exclude ``bool`` from the numeric check since Python's bool is a
         # subclass of int — a hand-edit like ``silence_threshold: true`` would otherwise forward as ``1``
         # instead of falling back to the documented 200 / 3.0 defaults (Copilot round-12 on #19835).
-        voice_cfg = _voice_cfg_dict()
-        max_rec = _voice_cfg_number(voice_cfg.get("max_recording_seconds"), 120.0)
         # Hand the mic to STT if the wake detector holds it; a terminal capture event resumes it.
         with contextlib.suppress(Exception):
             from tools.wake_word import pause_listening
