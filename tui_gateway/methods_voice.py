@@ -22,6 +22,7 @@ _voice_event_sid: str = ""
 _voice_wake_owner: "Optional[Transport]" = None
 _voice_rearm_lock = threading.Lock()
 _voice_rearm_generation = 0
+_voice_paused = False
 
 
 def _caller_transport():
@@ -53,7 +54,11 @@ def _voice_tts_enabled() -> bool:
 
 def _end_voice_chat(*, stop_loop: bool, stop_tts: bool) -> None:
     """Flip voice + TTS off; optionally halt the continuous loop / cut live TTS (best-effort)."""
+    global _voice_paused, _voice_rearm_generation
     os.environ["HERMES_VOICE"] = os.environ["HERMES_VOICE_TTS"] = "0"
+    with _voice_rearm_lock:
+        _voice_paused = False
+        _voice_rearm_generation += 1
     if stop_loop:
         with contextlib.suppress(Exception):
             from hermes_cli.voice import stop_continuous
@@ -639,10 +644,14 @@ def _voice_toggle_status(rid, params: dict) -> dict:
 
 
 def _voice_toggle_mode(rid, params: dict) -> dict:
+    global _voice_paused, _voice_rearm_generation
     enabled = params.get("action") == "on"
     os.environ["HERMES_VOICE"] = "1" if enabled else "0"
     stop_hint = ""
     if enabled:
+        with _voice_rearm_lock:
+            _voice_paused = False
+            _voice_rearm_generation += 1
         # Spoken-stop hint for the client; sourced from voice.stop_phrases, empty when disabled.
         with contextlib.suppress(Exception):
             from tools.voice_mode_transcript import voice_stop_hint
@@ -651,6 +660,9 @@ def _voice_toggle_mode(rid, params: dict) -> dict:
         if _voice_tts_enabled():
             _tts_lease_async("tui:voice-tts", True)
     else:
+        with _voice_rearm_lock:
+            _voice_paused = False
+            _voice_rearm_generation += 1
         # The continuous loop holds the microphone; tear it down with the mode.
         try:
             from hermes_cli.voice import stop_continuous
@@ -697,6 +709,9 @@ def _(rid, params: dict) -> dict:
 # voice.record callbacks: each terminal capture event resumes the wake detector so wake-triggered
 # and manual captures coexist.
 def _vr_transcript(payload: dict) -> None:
+    with _voice_rearm_lock:
+        if _voice_paused:
+            return
     _voice_emit("voice.transcript", payload)
     if payload.get("text"):
         _voice_emit("voice.status", {"state": "thinking"})
@@ -716,19 +731,21 @@ def _rearm_after_turn(generation: int, voice_cfg: dict, max_rec: float) -> None:
         _voice_emit("voice.status", {"state": "speaking"})
         time.sleep(0.05)
     with _voice_rearm_lock:
-        if generation != _voice_rearm_generation or not _voice_mode_enabled():
+        if generation != _voice_rearm_generation or _voice_paused or not _voice_mode_enabled():
             return
     try:
         from hermes_cli.voice import start_continuous, set_voice_busy_probe
         with contextlib.suppress(Exception):
             set_voice_busy_probe(_any_session_running)
-        start_continuous(
+        started = start_continuous(
             on_transcript=lambda t: _vr_transcript({"text": t}), on_status=_vr_on_status,
             on_silent_limit=lambda: _vr_transcript({"no_speech_limit": True}),
             silence_threshold=_voice_cfg_number(voice_cfg.get("silence_threshold"), 200),
             silence_duration=_voice_cfg_number(voice_cfg.get("silence_duration"), 3.0),
             auto_restart=False, max_recording_seconds=max_rec if max_rec > 0 else 0.0,
             on_stop_phrase=_vr_on_stop_phrase)
+        if started is False:
+            _voice_emit("voice.status", {"state": "degraded"})
     except Exception as exc:
         logger.warning("voice: rearm failed: %s", exc)
         _voice_emit("voice.status", {"state": "degraded"})
@@ -742,6 +759,10 @@ def _vr_on_stop_phrase(t):
 
 
 def _vr_on_status(state):
+    with _voice_rearm_lock:
+        if _voice_paused:
+            _voice_emit("voice.status", {"state": "paused"})
+            return
     _voice_emit("voice.status", {"state": state})
     if state == "idle":
         _resume_voice_wake()
@@ -753,34 +774,60 @@ def _(rid, params: dict) -> dict:
     capture; ``stop`` forces transcription. Three silent captures emit ``no_speech_limit``."""
     action = params.get("action", "start")
     wake_paused = False
-    if action not in {"start", "stop", "rearm"}:
+    global _voice_event_sid, _voice_wake_owner, _voice_rearm_generation, _voice_paused
+    if action not in {"start", "stop", "rearm", "pause", "resume"}:
         return _err(rid, 4019, f"unknown voice action: {action}")
     transport = _caller_transport()
     wake_owner, _surface = _wake_owner_snapshot()
     if wake_owner is not None and wake_owner is not transport:
         return _ok(rid, {"status": "busy", "reason": "wake_owned"})
     try:
-        global _voice_event_sid, _voice_wake_owner
         if action == "start" and not _voice_mode_enabled():
             return _err(rid, 4015, "voice mode is off — enable with /voice on")
         with _voice_sid_lock:
             _voice_event_sid = params.get("session_id") or _voice_event_sid
         voice_cfg = _voice_cfg_dict()
         max_rec = _voice_cfg_number(voice_cfg.get("max_recording_seconds"), 120.0)
-        if action == "rearm":
-            global _voice_rearm_generation
+        if action == "pause":
             with _voice_rearm_lock:
+                _voice_paused = True
+                _voice_rearm_generation += 1
+            from hermes_cli.voice import stop_continuous
+            stop_continuous()
+            _tts_stream_stop(user_barge=False)
+            _resume_voice_wake()
+            _voice_emit("voice.status", {"state": "paused"})
+            return _ok(rid, {"status": "paused"})
+        if action == "resume":
+            if not _voice_mode_enabled():
+                return _err(rid, 4015, "voice mode is off - enable with /voice on")
+            with _voice_rearm_lock:
+                _voice_paused = False
+                _voice_rearm_generation += 1
+                generation = _voice_rearm_generation
+            threading.Thread(target=_rearm_after_turn, args=(generation, voice_cfg, max_rec),
+                             name="voice-turn-resume", daemon=True).start()
+            return _ok(rid, {"status": "recording"})
+        if action == "rearm":
+            with _voice_rearm_lock:
+                if _voice_paused:
+                    return _ok(rid, {"status": "paused"})
                 _voice_rearm_generation += 1
                 generation = _voice_rearm_generation
             threading.Thread(target=_rearm_after_turn, args=(generation, voice_cfg, max_rec),
                              name="voice-turn-rearm", daemon=True).start()
             return _ok(rid, {"status": "recording"})
         if action == "stop":
+            with _voice_rearm_lock:
+                _voice_rearm_generation += 1
             from hermes_cli.voice import stop_continuous
             stop_continuous(force_transcribe=True)
             _resume_voice_wake()
             return _ok(rid, {"status": "stopped"})
         from hermes_cli.voice import start_continuous
+        with _voice_rearm_lock:
+            _voice_paused = False
+            _voice_rearm_generation += 1
         # Busy probe holds the no-speech counter during long agent turns; safe to re-register every
         # start (older wrappers lack the setter).
         with contextlib.suppress(Exception):

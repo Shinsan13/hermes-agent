@@ -469,8 +469,11 @@ export interface InputHandlerContext {
   }
   voice: {
     enabled: boolean
+    paused: boolean
     recordKey: ParsedVoiceRecordKey
     recording: boolean
+    setPaused: StateSetter<boolean>
+    setPhase: StateSetter<string>
     setProcessing: StateSetter<boolean>
     setRecording: StateSetter<boolean>
     setVoiceEnabled: StateSetter<boolean>
@@ -517,6 +520,8 @@ export interface GatewayEventHandlerContext {
     setHistoryItems: StateSetter<Msg[]>
   }
   voice: {
+    setPaused: StateSetter<boolean>
+    setPhase: StateSetter<string>
     setProcessing: StateSetter<boolean>
     setRecording: StateSetter<boolean>
     setVoiceEnabled: StateSetter<boolean>

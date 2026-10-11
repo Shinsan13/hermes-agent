@@ -392,6 +392,28 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
       })
   }
 
+  // F8 controls the whole voice conversation. Pause stops capture (releasing
+  // the microphone) and speech; resume asks the gateway to re-arm after its
+  // actual turn/TTS boundary. It never fakes a client-side capture state.
+  const voicePauseToggle = () => {
+    if (!voice.enabled) {
+      return actions.sys('voice: mode is off - enable with /voice on')
+    }
+
+    const action = voice.paused ? 'resume' : 'pause'
+    gateway
+      .rpc<VoiceRecordResponse>('voice.record', { action, session_id: getUiState().sid })
+      .then(() => {
+        voice.setPaused(action === 'pause')
+        voice.setPhase(action === 'pause' ? 'paused' : 'thinking')
+        if (action === 'pause') {
+          voice.setRecording(false)
+          voice.setProcessing(false)
+        }
+      })
+      .catch((e: Error) => actions.sys(`voice ${action} error: ${e.message}`))
+  }
+
   // Double-Esc discards the draft, matching Claude Code / Gemini CLI. It
   // sits above the isBlocked early-return so a prompt overlay cannot swallow
   // it. Ctrl+C now clears a non-empty composer even mid-stream; Esc Esc is
@@ -400,6 +422,10 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
 
   useInput((ch, key, event) => {
     const live = getUiState()
+
+    if (event.keypress.name === 'f8' && !key.ctrl && !key.meta && !key.shift && !key.super) {
+      return voicePauseToggle()
+    }
 
     if (key.escape) {
       const now = Date.now()

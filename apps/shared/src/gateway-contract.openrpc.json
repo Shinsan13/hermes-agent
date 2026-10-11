@@ -36339,7 +36339,9 @@
         "enum": [
           "start",
           "stop",
-          "rearm"
+          "rearm",
+          "pause",
+          "resume"
         ],
         "title": "VoiceRecordAction",
         "type": "string"
@@ -36408,7 +36410,8 @@
         "enum": [
           "recording",
           "stopped",
-          "busy"
+          "busy",
+          "paused"
         ],
         "title": "VoiceRecordStatus",
         "type": "string"

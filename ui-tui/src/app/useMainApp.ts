@@ -216,6 +216,8 @@ export function useMainApp(gw: GatewayClient) {
   const [voiceTts, setVoiceTts] = useState(false)
   const [voiceRecording, setVoiceRecording] = useState(false)
   const [voiceProcessing, setVoiceProcessing] = useState(false)
+  const [voicePaused, setVoicePaused] = useState(false)
+  const [voicePhase, setVoicePhase] = useState('idle')
   const [voiceRecordKey, setVoiceRecordKey] = useState<ParsedVoiceRecordKey>(DEFAULT_VOICE_RECORD_KEY)
   const [sessionStartedAt, setSessionStartedAt] = useState(() => Date.now())
   const [dashboardFreshSessionId, setDashboardFreshSessionId] = useState<null | string>(null)
@@ -901,8 +903,11 @@ export function useMainApp(gw: GatewayClient) {
     terminal: { hasSelection, scrollRef, scrollWithSelection, selection, stdout },
     voice: {
       enabled: voiceEnabled,
+      paused: voicePaused,
       recordKey: voiceRecordKey,
       recording: voiceRecording,
+      setPaused: setVoicePaused,
+      setPhase: setVoicePhase,
       setProcessing: setVoiceProcessing,
       setRecording: setVoiceRecording,
       setVoiceEnabled,
@@ -929,6 +934,8 @@ export function useMainApp(gw: GatewayClient) {
         system: { bellOnComplete, bellOnPrompt, stdout, sys },
         transcript: { appendMessage, panel, setHistoryItems },
         voice: {
+          setPaused: setVoicePaused,
+          setPhase: setVoicePhase,
           setProcessing: setVoiceProcessing,
           setRecording: setVoiceRecording,
           setVoiceEnabled,
@@ -1410,11 +1417,9 @@ export function useMainApp(gw: GatewayClient) {
       turnStartedAt: ui.sid ? turnStartedAt : null,
       // CLI parity: the classic prompt_toolkit status bar shows a red dot
       // on REC (cli.py:_get_voice_status_fragments line 2344).
-      voiceLabel: voiceRecording
-        ? '● REC'
-        : voiceProcessing
-          ? '◉ STT'
-          : `voice ${voiceEnabled ? 'on' : 'off'}${voiceTts ? ' [tts]' : ''}`
+      voiceLabel: voiceEnabled
+        ? `voice ${voicePhase.toUpperCase()}${voiceTts ? ' [tts]' : ''}`
+        : 'voice off'
     }),
     [
       cwd,
@@ -1426,6 +1431,8 @@ export function useMainApp(gw: GatewayClient) {
       turnStartedAt,
       ui,
       voiceEnabled,
+      voicePhase,
+      voicePaused,
       voiceProcessing,
       voiceRecording,
       voiceTts

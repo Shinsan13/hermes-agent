@@ -367,6 +367,8 @@ class VoiceRecordAction(WireEnum):
     start = "start"
     stop = "stop"
     rearm = "rearm"
+    pause = "pause"
+    resume = "resume"
 
 
 class VoiceRecordParams(Params):
@@ -379,6 +381,7 @@ class VoiceRecordStatus(WireEnum):
     recording = "recording"
     stopped = "stopped"
     busy = "busy"
+    paused = "paused"
 
 
 class VoiceRecordResult(Result):

@@ -2657,12 +2657,12 @@ export interface VoiceRecordParams {
   session_id?: string | null
   profile?: string | null
 }
-export type VoiceRecordAction = 'start' | 'stop' | 'rearm'
+export type VoiceRecordAction = 'start' | 'stop' | 'rearm' | 'pause' | 'resume'
 export interface VoiceRecordResult {
   status: VoiceRecordStatus
   reason?: string | null
 }
-export type VoiceRecordStatus = 'recording' | 'stopped' | 'busy'
+export type VoiceRecordStatus = 'recording' | 'stopped' | 'busy' | 'paused'
 export interface VoiceTtsParams {
   text: string
   profile?: string | null

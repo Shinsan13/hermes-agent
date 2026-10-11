@@ -452,7 +452,13 @@ export function createGatewayEventHandler(ctx: GatewayEventHandlerContext): (ev:
   const { appendMessage, panel, setHistoryItems } = ctx.transcript
   const { setInput } = ctx.composer
   const { submitLiteralRef, submitRef } = ctx.submission
-  const { setProcessing: setVoiceProcessing, setRecording: setVoiceRecording, setVoiceEnabled } = ctx.voice
+  const {
+    setPaused: setVoicePaused,
+    setPhase: setVoicePhase,
+    setProcessing: setVoiceProcessing,
+    setRecording: setVoiceRecording,
+    setVoiceEnabled
+  } = ctx.voice
 
   let pendingThinkingStatus = ''
   let thinkingStatusTimer: null | ReturnType<typeof setTimeout> = null
@@ -1057,6 +1063,8 @@ export function createGatewayEventHandler(ctx: GatewayEventHandlerContext): (ev:
         // Continuous VAD loop reports its internal state so the status bar
         // can show listening / transcribing / idle without polling.
         const state = String(ev.payload?.state ?? '')
+        setVoicePhase(state || 'degraded')
+        setVoicePaused(state === 'paused')
 
         if (state === 'listening') {
           setVoiceRecording(true)
@@ -1079,6 +1087,8 @@ export function createGatewayEventHandler(ctx: GatewayEventHandlerContext): (ev:
         // so (this is intent, not the no-speech timeout below).
         if (ev.payload?.stop_phrase) {
           setVoiceEnabled(false)
+          setVoicePaused(false)
+          setVoicePhase('idle')
           setVoiceRecording(false)
           setVoiceProcessing(false)
           sys('voice: stop phrase — voice chat ended')

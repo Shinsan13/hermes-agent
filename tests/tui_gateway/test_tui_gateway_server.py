@@ -2261,6 +2261,100 @@ def test_voice_rearm_waits_for_turn_boundary_and_supports_twenty_cycles(monkeypa
     assert all(call["silence_duration"] == 0.9 for call in calls)
 
 
+def test_voice_pause_releases_capture_cancels_rearm_and_resume_rearms_once(monkeypatch):
+    """F8's gateway action pauses the *conversation*, not merely its badge.
+
+    The fake audio provider verifies the required ownership boundary: pause
+    stops capture and active speech, invalidates an already queued re-arm, and
+    resume starts exactly one new VAD capture through the same gateway path.
+    """
+    calls = {"start": 0, "stop": 0, "tts_stop": 0, "wake": 0}
+    emitted = []
+
+    def start_continuous(**_kwargs):
+        calls["start"] += 1
+        return True
+
+    class ImmediateThread:
+        def __init__(self, *, target, args, **_kwargs):
+            self.target, self.args = target, args
+
+        def start(self):
+            self.target(*self.args)
+
+    monkeypatch.setitem(sys.modules, "hermes_cli.voice", types.SimpleNamespace(
+        start_continuous=start_continuous,
+        stop_continuous=lambda *args, **kwargs: calls.__setitem__("stop", calls["stop"] + 1),
+        set_voice_busy_probe=lambda _probe: None,
+    ))
+    monkeypatch.setattr(server.threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(server, "_fd_tts_pending", lambda: False)
+    monkeypatch.setattr(server, "_tts_stream_stop",
+                        lambda **_kwargs: calls.__setitem__("tts_stop", calls["tts_stop"] + 1))
+    monkeypatch.setattr(server, "_resume_voice_wake",
+                        lambda: calls.__setitem__("wake", calls["wake"] + 1))
+    monkeypatch.setattr(server, "_voice_emit", lambda event, payload: emitted.append((event, payload)))
+    monkeypatch.setattr(server, "_voice_paused", False)
+    monkeypatch.setattr(server, "_voice_rearm_generation", 7)
+    monkeypatch.setenv("HERMES_VOICE", "1")
+
+    paused = _dispatch_sync({"id": "pause", "method": "voice.record", "params": {"action": "pause"}})
+    assert paused["result"]["status"] == "paused"
+    assert calls == {"start": 0, "stop": 1, "tts_stop": 1, "wake": 1}
+    assert server._voice_paused is True
+    assert ("voice.status", {"state": "paused"}) in emitted
+
+    # An acknowledgement from the pre-pause turn cannot reopen the mic.
+    server._rearm_after_turn(7, {}, 10.0)
+    assert calls["start"] == 0
+
+    resumed = _dispatch_sync({"id": "resume", "method": "voice.record", "params": {"action": "resume"}})
+    assert resumed["result"]["status"] == "recording"
+    assert server._voice_paused is False
+    assert calls["start"] == 1
+
+
+def test_voice_rearm_reports_degraded_when_audio_provider_refuses_capture(monkeypatch):
+    emitted = []
+    monkeypatch.setitem(sys.modules, "hermes_cli.voice", types.SimpleNamespace(
+        start_continuous=lambda **_kwargs: False,
+        set_voice_busy_probe=lambda _probe: None,
+    ))
+    monkeypatch.setattr(server, "_fd_tts_pending", lambda: False)
+    monkeypatch.setattr(server, "_voice_emit", lambda event, payload: emitted.append((event, payload)))
+    monkeypatch.setattr(server, "_voice_paused", False)
+    monkeypatch.setattr(server, "_voice_rearm_generation", 3)
+    monkeypatch.setenv("HERMES_VOICE", "1")
+
+    server._rearm_after_turn(3, {}, 10.0)
+
+    assert ("voice.status", {"state": "degraded"}) in emitted
+
+
+def test_voice_gateway_statuses_come_from_live_capture_turn_and_tts_events(monkeypatch):
+    """The TUI's persistent labels are driven by real gateway callbacks."""
+    emitted = []
+    pending = iter((True, False))
+    monkeypatch.setitem(sys.modules, "hermes_cli.voice", types.SimpleNamespace(
+        start_continuous=lambda **_kwargs: True,
+        set_voice_busy_probe=lambda _probe: None,
+    ))
+    monkeypatch.setattr(server, "_voice_emit", lambda event, payload: emitted.append((event, payload)))
+    monkeypatch.setattr(server, "_fd_tts_pending", lambda: next(pending))
+    monkeypatch.setattr(server.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(server, "_voice_paused", False)
+    monkeypatch.setattr(server, "_voice_rearm_generation", 11)
+    monkeypatch.setenv("HERMES_VOICE", "1")
+
+    server._vr_on_status("listening")
+    server._vr_on_status("transcribing")
+    server._vr_transcript({"text": "hello"})
+    server._rearm_after_turn(11, {}, 10.0)
+
+    states = [payload["state"] for event, payload in emitted if event == "voice.status"]
+    assert states == ["listening", "transcribing", "thinking", "speaking"]
+
+
 def test_voice_record_stop_updates_event_session_id(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
