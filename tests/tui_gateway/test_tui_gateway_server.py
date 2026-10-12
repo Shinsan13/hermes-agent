@@ -2261,6 +2261,39 @@ def test_voice_rearm_waits_for_turn_boundary_and_supports_twenty_cycles(monkeypa
     assert all(call["silence_duration"] == 0.9 for call in calls)
 
 
+def test_voice_rearm_rpc_accepts_twenty_tui_turn_completions(monkeypatch):
+    """Exercise the public gateway action sent by the TUI after each turn."""
+    calls = []
+
+    class ImmediateThread:
+        def __init__(self, *, target, args, **_kwargs):
+            self.target, self.args = target, args
+
+        def start(self):
+            self.target(*self.args)
+
+    monkeypatch.setitem(sys.modules, "hermes_cli.voice", types.SimpleNamespace(
+        start_continuous=lambda **kwargs: calls.append(kwargs) or True,
+        set_voice_busy_probe=lambda _probe: None,
+    ))
+    monkeypatch.setattr(server.threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(server, "_fd_tts_pending", lambda: False)
+    monkeypatch.setattr(server, "_voice_emit", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(server, "_voice_paused", False)
+    monkeypatch.setenv("HERMES_VOICE", "1")
+
+    for turn in range(20):
+        response = _dispatch_sync({
+            "id": f"turn-{turn}",
+            "method": "voice.record",
+            "params": {"action": "rearm", "session_id": "voice-session"},
+        })
+        assert response["result"]["status"] == "recording"
+
+    assert len(calls) == 20
+    assert all(call["auto_restart"] is False for call in calls)
+
+
 def test_voice_pause_releases_capture_cancels_rearm_and_resume_rearms_once(monkeypatch):
     """F8's gateway action pauses the *conversation*, not merely its badge.
 
