@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$ModelBaseUrl = 'http://127.0.0.1:18093/v1',
-    [string]$Model = 'corbin2-qwen3coder30b',
+    [string]$ModelBaseUrl = 'http://127.0.0.1:18193/v1',
+    [string]$Model = 'corbin2-bonsai27b',
     [switch]$Preflight,
     [switch]$KeepHome
 )
@@ -29,8 +29,8 @@ if ($modelIds -notcontains $Model) {
     throw "Configured model '$Model' is not listed by the local endpoint. Available: $($modelIds -join ', ')"
 }
 
-$home = Join-Path ([System.IO.Path]::GetTempPath()) ('hermes-c2-062-voice-' + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $home -Force | Out-Null
+$testHome = Join-Path ([System.IO.Path]::GetTempPath()) ('hermes-c2-062-voice-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $testHome -Force | Out-Null
 $config = @"
 model:
   provider: openai
@@ -44,14 +44,14 @@ voice:
 display:
   interface: tui
 "@
-Set-Content -LiteralPath (Join-Path $home 'config.yaml') -Value $config -Encoding utf8NoBOM
+Set-Content -LiteralPath (Join-Path $testHome 'config.yaml') -Value $config -Encoding UTF8
 
 $oldHome = $env:HERMES_HOME
 $oldVoice = $env:HERMES_VOICE
 $oldTts = $env:HERMES_VOICE_TTS
 $pushed = $false
 try {
-    $env:HERMES_HOME = $home
+    $env:HERMES_HOME = $testHome
     $env:HERMES_VOICE = '1'
     $env:HERMES_VOICE_TTS = '1'
     Push-Location $repoRoot
@@ -61,7 +61,7 @@ try {
         throw "Patched Hermes version preflight failed with exit code $LASTEXITCODE."
     }
     if ($Preflight) {
-        Write-Output "DISPOSABLE_VOICE_PREFLIGHT_OK home=$home model=$Model"
+        Write-Output "DISPOSABLE_VOICE_PREFLIGHT_OK home=$testHome model=$Model"
         return
     }
     Write-Host ''
@@ -85,9 +85,9 @@ finally {
     $env:HERMES_VOICE = $oldVoice
     $env:HERMES_VOICE_TTS = $oldTts
     if ($KeepHome) {
-        Write-Output "DISPOSABLE_VOICE_HOME_PRESERVED=$home"
+        Write-Output "DISPOSABLE_VOICE_HOME_PRESERVED=$testHome"
     }
     else {
-        Remove-Item -LiteralPath $home -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $testHome -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
