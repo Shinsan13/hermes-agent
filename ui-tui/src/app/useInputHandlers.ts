@@ -31,6 +31,22 @@ const DASHBOARD_NEW_SESSION_MESSAGE = 'starting a fresh dashboard chat...'
 
 export const shouldAllowIdleHotkeyExit = (dashboardTuiMode = DASHBOARD_TUI_MODE) => !dashboardTuiMode
 
+/** The TUI's unmodified F8 is reserved for the live voice conversation. */
+export function voiceConversationActionForF8(
+  keyName: string | undefined,
+  key: { ctrl?: boolean; meta?: boolean; shift?: boolean; super?: boolean },
+  voiceEnabled: boolean,
+  voicePaused: boolean
+): 'pause' | 'resume' | null {
+  if (
+    keyName !== 'f8' || key.ctrl || key.meta || key.shift || key.super || !voiceEnabled
+  ) {
+    return null
+  }
+
+  return voicePaused ? 'resume' : 'pause'
+}
+
 /** Text or attachments in the composer: Ctrl+D must not exit over an unsent draft (#116443). */
 export const composerHasDraft = (cState: { input: string; inputBuf: string[]; tokens?: unknown[] }): boolean =>
   Boolean(cState.input || cState.inputBuf.length || cState.tokens?.length)
@@ -395,12 +411,7 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
   // F8 controls the whole voice conversation. Pause stops capture (releasing
   // the microphone) and speech; resume asks the gateway to re-arm after its
   // actual turn/TTS boundary. It never fakes a client-side capture state.
-  const voicePauseToggle = () => {
-    if (!voice.enabled) {
-      return actions.sys('voice: mode is off - enable with /voice on')
-    }
-
-    const action = voice.paused ? 'resume' : 'pause'
+  const voicePauseToggle = (action: 'pause' | 'resume') => {
     gateway
       .rpc<VoiceRecordResponse>('voice.record', { action, session_id: getUiState().sid })
       .then(() => {
@@ -423,8 +434,9 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
   useInput((ch, key, event) => {
     const live = getUiState()
 
-    if (event.keypress.name === 'f8' && !key.ctrl && !key.meta && !key.shift && !key.super) {
-      return voicePauseToggle()
+    const voiceAction = voiceConversationActionForF8(event.keypress.name, key, voice.enabled, voice.paused)
+    if (voiceAction) {
+      return voicePauseToggle(voiceAction)
     }
 
     if (key.escape) {

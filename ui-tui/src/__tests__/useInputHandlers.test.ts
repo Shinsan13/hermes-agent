@@ -9,7 +9,8 @@ import {
   handleIdleHotkeyExit,
   resolveCtrlCComposerAction,
   shouldDetachEditedHistoryInput,
-  shouldFallThroughForScroll
+  shouldFallThroughForScroll,
+  voiceConversationActionForF8
 } from '../app/useInputHandlers.js'
 
 const baseKey = {
@@ -152,6 +153,21 @@ describe('applyVoiceRecordResponse', () => {
 
     expect(setRecording).toHaveBeenCalledWith(false)
     expect(setProcessing).toHaveBeenCalledWith(false)
+  })
+})
+
+describe('voiceConversationActionForF8', () => {
+  const plainKey = { ctrl: false, meta: false, shift: false, super: false }
+
+  it('routes plain F8 to pause and a second plain F8 to resume', () => {
+    expect(voiceConversationActionForF8('f8', plainKey, true, false)).toBe('pause')
+    expect(voiceConversationActionForF8('f8', plainKey, true, true)).toBe('resume')
+  })
+
+  it('does not steal modified F8 or any input while voice is disabled', () => {
+    expect(voiceConversationActionForF8('f8', { ...plainKey, ctrl: true }, true, false)).toBeNull()
+    expect(voiceConversationActionForF8('f7', plainKey, true, false)).toBeNull()
+    expect(voiceConversationActionForF8('f8', plainKey, false, false)).toBeNull()
   })
 })
 

@@ -60,6 +60,8 @@ const buildCtx = (appended: Msg[]) =>
       setHistoryItems: vi.fn()
     },
     voice: {
+      setPaused: vi.fn(),
+      setPhase: vi.fn(),
       setProcessing: vi.fn(),
       setRecording: vi.fn(),
       setVoiceEnabled: vi.fn()
